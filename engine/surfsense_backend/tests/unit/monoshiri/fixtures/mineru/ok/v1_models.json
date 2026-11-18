@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "content_type": "application/json",
+  "body": {
+    "object": "list",
+    "data": [
+      {
+        "id": "mineru-4.1.3",
+        "object": "model",
+        "created": 1793974678,
+        "owned_by": "mineru",
+        "description": "MinerU virtual model. PDF/image quality is selected per request via tier; native documents always use flash. this id identifies the server version, not a specific engine."
+      }
+    ]
+  }
+}

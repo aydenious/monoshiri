@@ -1,0 +1,100 @@
+import {
+	BadgeCheck,
+	Brain,
+	Calendar,
+	Clapperboard,
+	ExternalLink,
+	FileInput,
+	FileOutput,
+	FilePenLine,
+	FilePlus,
+	Files,
+	FileText,
+	FileX,
+	Film,
+	FolderOpen,
+	FolderPlus,
+	FolderSearch,
+	FolderTree,
+	FolderX,
+	ImageIcon,
+	LibraryBig,
+	ListTodo,
+	type LucideIcon,
+	Mic2,
+	Route,
+	ScanText,
+	Search,
+	SearchCode,
+	SquareCode,
+	SquareTerminal,
+	Terminal,
+	Workflow,
+	Wrench,
+} from "lucide-react";
+import type { ActivityData, ActivityStatus } from "@/lib/chat/activity-journal";
+
+export function getActivityPresentation(
+	activity: ActivityData,
+	threadRunning: boolean
+): { status: ActivityStatus; title: string } {
+	const status = activity.status === "running" && !threadRunning ? "interrupted" : activity.status;
+	return {
+		status,
+		title: status === "running" && activity.progressTitle ? activity.progressTitle : activity.title,
+	};
+}
+
+const ACTIVITY_ICONS: Record<string, LucideIcon> = {
+	"badge-check": BadgeCheck,
+	brain: Brain,
+	calendar: Calendar,
+	clapperboard: Clapperboard,
+	"external-link": ExternalLink,
+	file: FileText,
+	"file-input": FileInput,
+	"file-output": FileOutput,
+	"file-pen": FilePenLine,
+	"file-plus": FilePlus,
+	"file-text": FileText,
+	"file-x": FileX,
+	files: Files,
+	film: Film,
+	"folder-open": FolderOpen,
+	"folder-plus": FolderPlus,
+	"folder-search": FolderSearch,
+	"folder-tree": FolderTree,
+	"folder-x": FolderX,
+	image: ImageIcon,
+	library: LibraryBig,
+	"list-todo": ListTodo,
+	microphone: Mic2,
+	route: Route,
+	"scan-text": ScanText,
+	"search-code": SearchCode,
+	search: Search,
+	"square-code": SquareCode,
+	"square-terminal": SquareTerminal,
+	terminal: Terminal,
+	tool: Wrench,
+	research: Search,
+	artifact: FileOutput,
+	connector: Workflow,
+	action: Wrench,
+	workflow: Workflow,
+};
+
+export function getActivityIcon(iconKey: string, category: ActivityData["category"]): LucideIcon {
+	return ACTIVITY_ICONS[iconKey] ?? ACTIVITY_ICONS[category] ?? Wrench;
+}
+
+const SERVICE_LOGOS: Record<string, { src: string; alt: string }> = {
+	google_search: { src: "/connectors/google-search.svg", alt: "Google Search" },
+	web: { src: "/connectors/web.svg", alt: "Web" },
+	youtube: { src: "/connectors/youtube.svg", alt: "YouTube" },
+};
+
+export function getConnectorLogo(integration: ActivityData["integration"]) {
+	if (integration?.key && SERVICE_LOGOS[integration.key]) return SERVICE_LOGOS[integration.key];
+	return undefined;
+}

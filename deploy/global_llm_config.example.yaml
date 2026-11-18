@@ -1,0 +1,52 @@
+# Copy to global_llm_config.yaml (it is mounted into the backend and worker) and add your keys.
+# `provider` is the LiteLLM provider, lowercase. `openai` means any OpenAI-compatible endpoint.
+router_settings:
+  routing_strategy: usage-based-routing
+  num_retries: 3
+  allowed_fails: 3
+  cooldown_time: 60
+global_llm_configs:
+- id: -1
+  name: DeepSeek V4 Flash
+  description: DeepSeek V4 Flash via the DeepSeek API.
+  billing_tier: free
+  anonymous_enabled: false
+  seo_enabled: false
+  seo_slug: deepseek-v4-flash
+  quota_reserve_tokens: 4000
+  provider: deepseek
+  model_name: deepseek-v4-flash
+  api_key: your-api-key
+  api_base: https://api.deepseek.com/v1
+  rpm: 60
+  tpm: 100000
+  litellm_params:
+    temperature: 0.7
+    max_tokens: 4000
+    model_kwargs:
+      extra_body:
+        thinking:
+          type: disabled
+  system_instructions: ''
+  use_default_system_instructions: true
+  citations_enabled: true
+- id: -2
+  name: Local model (OpenAI-compatible)
+  description: A local llama.cpp, Ollama or other OpenAI-compatible server on the Docker host.
+  billing_tier: free
+  anonymous_enabled: false
+  seo_enabled: false
+  seo_slug: local-model
+  quota_reserve_tokens: 4000
+  provider: openai
+  model_name: your-model-name
+  api_key: your-api-key
+  api_base: http://host.docker.internal:8081/v1
+  rpm: 30
+  tpm: 50000
+  litellm_params:
+    temperature: 0.3
+    max_tokens: 2000
+  system_instructions: ''
+  use_default_system_instructions: true
+  citations_enabled: false

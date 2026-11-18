@@ -1,0 +1,33 @@
+"use client";
+
+import "./globals.css";
+import { Button } from "@/components/ui/button";
+
+export default function GlobalError({
+	error,
+	reset,
+}: {
+	error: Error & { digest?: string };
+	reset: () => void;
+}) {
+	return (
+		<html lang="en">
+			<body>
+				<div className="flex min-h-screen flex-col items-center justify-center gap-4 p-4 text-center">
+					<h2 className="text-xl font-semibold">Something went wrong</h2>
+					<p className="text-sm text-muted-foreground max-w-md">
+						An unexpected error occurred. Please try again.
+					</p>
+
+					{error.digest && (
+						<p className="text-xs text-muted-foreground font-mono">Digest: {error.digest}</p>
+					)}
+
+					<div className="flex gap-2">
+						<Button onClick={reset}>Try again</Button>
+					</div>
+				</div>
+			</body>
+		</html>
+	);
+}

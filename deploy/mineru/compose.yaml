@@ -1,0 +1,48 @@
+# MinerU converter for Monoshiri (PDF, images, office files). CPU only.
+#
+# The API has no host port. It is reachable only on the external network mineru-net, which
+# Monoshiri's backend and worker join:
+#   docker network create --internal mineru-net
+# Every request needs `Authorization: Bearer $MINERU_API_KEY` (set it in .env, copy
+# .env.example). /v1/health, /v1/models and /v1/tiers are public by design.
+# Models and state live in ${MINERU_MODELS_DIR:-./models}; the first conversion downloads them.
+name: mineru
+
+services:
+  mineru-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mineru-cpu:4.1.3
+    volumes:
+      - ${MINERU_MODELS_DIR:-./models}:/cache
+    env_file: .env
+    environment:
+      # Set to your physical core count; hyperthreads add contention.
+      OMP_NUM_THREADS: "12"
+      MINERU_CPU_NUM_THREADS: "12"
+    # modelscope metadata checks can hard-fail on flaky router DNS; pin public resolvers.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    command:
+      - sh
+      - -c
+      - exec mineru-api --host 0.0.0.0 --port 8000 --tier standard --concurrency 1
+          --api-key "$$MINERU_API_KEY" --retention-seconds 21600
+    # One conversion at a time, bounded memory. Uploads live in the container tmp dir (lost on
+    # restart; Monoshiri resubmits). Monoshiri re-uploads the whole PDF per page batch, so keep
+    # retention short (6 h).
+    mem_limit: 14g
+    networks: [default, mineru-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s
+      retries: 3
+
+networks:
+  mineru-net:
+    external: true

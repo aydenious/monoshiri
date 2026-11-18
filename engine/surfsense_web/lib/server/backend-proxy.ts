@@ -1,0 +1,72 @@
+import type { NextRequest } from "next/server";
+
+const HOP_BY_HOP_HEADERS = new Set([
+	"connection",
+	"keep-alive",
+	"proxy-authenticate",
+	"proxy-authorization",
+	"te",
+	"trailer",
+	"transfer-encoding",
+	"upgrade",
+]);
+
+function getBackendBaseUrl() {
+	const base =
+		process.env.SURFSENSE_BACKEND_INTERNAL_URL ||
+		// TODO: Remove FASTAPI_BACKEND_INTERNAL_URL after the post-Caddy env migration window.
+		process.env.FASTAPI_BACKEND_INTERNAL_URL ||
+		"http://backend:8000";
+	return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function toUpstreamHeaders(headers: Headers) {
+	const nextHeaders = new Headers(headers);
+	nextHeaders.delete("host");
+	nextHeaders.delete("content-length");
+	return nextHeaders;
+}
+
+function toClientHeaders(headers: Headers) {
+	const nextHeaders = new Headers(headers);
+	for (const header of HOP_BY_HOP_HEADERS) {
+		nextHeaders.delete(header);
+	}
+	return nextHeaders;
+}
+
+/**
+ * Builds a Next.js route handler that streams requests to the FastAPI backend
+ * under `prefix` (e.g. `/auth`). One handler per proxied prefix; the route
+ * files keep their own `dynamic` segment config and method exports.
+ */
+export function createBackendProxy(prefix: string) {
+	return async function proxy(
+		request: NextRequest,
+		context: { params: Promise<{ path?: string[] }> }
+	) {
+		const params = await context.params;
+		const path = params.path?.join("/") || "";
+		const upstreamUrl = new URL(`${getBackendBaseUrl()}${prefix}/${path}`);
+		upstreamUrl.search = request.nextUrl.search;
+
+		const hasBody = request.method !== "GET" && request.method !== "HEAD";
+
+		const response = await fetch(upstreamUrl, {
+			method: request.method,
+			headers: toUpstreamHeaders(request.headers),
+			body: hasBody ? request.body : undefined,
+			// `duplex: "half"` is required by the Fetch spec when streaming a
+			// ReadableStream as the request body. Avoids buffering uploads in heap.
+			// @ts-expect-error - `duplex` is not yet in lib.dom RequestInit types.
+			duplex: hasBody ? "half" : undefined,
+			redirect: "manual",
+		});
+
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: toClientHeaders(response.headers),
+		});
+	};
+}

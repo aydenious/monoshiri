@@ -1,0 +1,32 @@
+"""``google_search.scrape`` capability registration."""
+
+from __future__ import annotations
+
+from app.capabilities.core import (
+    ActivityDescriptor,
+    Capability,
+    register_capability,
+)
+from app.capabilities.google_search.scrape.executor import build_scrape_executor
+from app.capabilities.google_search.scrape.schemas import ScrapeInput, ScrapeOutput
+
+GOOGLE_SEARCH_SCRAPE = Capability(
+    name="google_search.scrape",
+    description=(
+        "Search Google and return structured SERP results. Use search_queries "
+        "or Google Search URLs."
+    ),
+    input_schema=ScrapeInput,
+    output_schema=ScrapeOutput,
+    executor=build_scrape_executor(),
+    docs_url="/docs/legacy/connectors/native/google-search",
+    activity=ActivityDescriptor(
+        active_title="Searching the web",
+        completed_title="Searched the web",
+        category="research",
+        icon_key="search",
+        integration_key="google_search",
+    ),
+)
+
+register_capability(GOOGLE_SEARCH_SCRAPE)

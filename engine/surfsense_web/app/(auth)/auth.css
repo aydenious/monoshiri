@@ -1,0 +1,95 @@
+/**
+ * Minimal stylesheet for the sign-in and register pages.
+ *
+ * Trimmed from the old marketing stylesheet: only the dark palette and the
+ * four classes the auth pages use.
+ */
+
+.ss-home {
+	/* Canonical SurfSense palette — the `.dark` block of index.css, pinned. */
+	--app-shell: #101010;
+	--background: #141414;
+	--foreground: #e8e3da;
+	--card: #1c1c1c;
+	--card-foreground: #e8e3da;
+	--popover: #1c1c1c;
+	--popover-foreground: #e8e3da;
+	--primary: #d9aa90;
+	--primary-foreground: #363636;
+	--secondary: #222222;
+	--secondary-foreground: #d1cfc0;
+	--muted: #2a2a2a;
+	--muted-foreground: #8e8a83;
+	--accent: #363636;
+	--accent-foreground: #d1cfc0;
+	--destructive: #ef4444;
+	--destructive-foreground: #ffffff;
+	--notice: #3f74c8;
+	--border: #2c2c2c;
+	/* A darker line for dividers *inside* a group of things (cells in one
+	 * bento row, columns in one table) as opposed to `--border`, which marks
+	 * where one section ends and the next begins. Derived from `--border`
+	 * rather than a new literal, so it darkens with the palette if that ever
+	 * changes. */
+	--home-divider: color-mix(in oklab, var(--border) 90%, black);
+	--input: #2c2c2c;
+	--ring: #d9aa90;
+	--chart-1: #f26a4b;
+	--chart-2: #d9cfc2;
+	--chart-3: #8e8a83;
+	--chart-4: #5c5a56;
+	--chart-5: #3b3b3b;
+	--radius: 0.5rem;
+
+	/* The reference marks its one accent clause, its "ours" table column and its
+	 * forward links in a single tone. It is `--primary`, a warm peach that departs
+	 * from the desktop app's putty on purpose so the accent reads apart from
+	 * the cream `--foreground`. On `--background` it measures 8.9:1, which
+	 * clears WCAG AAA for text at any size. */
+	--home-accent: var(--primary);
+
+	/* Layout rhythm. The column is deliberately narrower than the viewport: long
+	 * measures are hard to read, and the ruled side borders only read as a frame
+	 * when there is ground either side of them. */
+	--home-gutter: 1.5rem;
+	/* Narrower than the rest of the site: long measures are hard to read, and
+	 * the ruled side borders only read as a frame when there is ground either
+	 * side of them. */
+	--home-max: 72rem;
+
+	background-color: var(--background);
+	color: var(--foreground);
+	color-scheme: dark;
+	-webkit-font-smoothing: antialiased;
+}
+
+@media (min-width: 768px) {
+	.ss-home {
+		--home-gutter: 2.5rem;
+	}
+}
+
+.ss-home-pad {
+	padding-inline: var(--home-gutter);
+}
+
+.ss-home-h2 {
+	font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+	line-height: 1.15;
+	letter-spacing: -0.025em;
+	font-weight: 600;
+	text-wrap: balance;
+}
+
+.ss-home-body {
+	line-height: 1.65;
+	color: var(--muted-foreground);
+	text-wrap: pretty;
+}
+
+.ss-home-hero {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	padding-block: clamp(5rem, 14vh, 8rem);
+}

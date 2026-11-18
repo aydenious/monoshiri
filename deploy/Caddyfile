@@ -1,0 +1,39 @@
+# Route split Monoshiri needs. The web image calls /api, /auth, /users and /zero on the page's
+# own origin, so this proxy must send each path to the right service. Order matters.
+#
+# By default this serves plain HTTP on :80, published by compose as ${HTTP_PORT:-8080}, and
+# expects your own HTTPS proxy in front of it.
+# To let this Caddy fetch certificates itself instead: replace ":80" below with your domain
+# (for example "monoshiri.example.com"), remove "auto_https off", and change the caddy ports in
+# compose.yaml to "80:80" and "443:443".
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	handle /auth/callback* {
+		reverse_proxy frontend:3000
+	}
+	handle /auth/* {
+		reverse_proxy backend:8000
+	}
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+	@backend_other path /users* /health /verify-token
+	handle @backend_other {
+		reverse_proxy backend:8000
+	}
+	# /zero/context is a backend endpoint (auth context); the rest of /zero/* is zero-cache,
+	# with the /zero prefix stripped.
+	handle /zero/context* {
+		reverse_proxy backend:8000
+	}
+	handle_path /zero/* {
+		reverse_proxy zero-cache:4848
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

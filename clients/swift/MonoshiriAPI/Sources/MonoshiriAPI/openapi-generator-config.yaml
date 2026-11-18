@@ -1,0 +1,53 @@
+# Generates Swift types + a client for the iOS subset of the frozen contract.
+# Filtering is by operationId: filtering by path would also pull in every other
+# method on the same path (account deletion, workspace/folder/document creation,
+# appending a non-streaming message). Operation IDs must exist in openapi.json;
+# the drift check keeps this config, the contract and the Swift copy in sync.
+generate:
+  - types
+  - client
+accessModifier: public
+filter:
+  operations:
+    # server check: the login screen's Test connection (unauthenticated liveness probe)
+    - health_check_health_get
+    # auth / user
+    - token_login_auth_jwt_token_post
+    - refresh_access_token_auth_jwt_refresh_post
+    - revoke_token_auth_jwt_revoke_post
+    - get_current_user_profile_users_me_get
+    # workspaces / folders
+    - read_workspaces_api_v1_workspaces_get
+    - list_folders_api_v1_folders_get
+    # documents
+    - read_documents_api_v1_documents_get
+    - get_documents_status_api_v1_documents_status_get
+    - read_document_api_v1_documents__document_id__get
+    - delete_document_api_v1_documents__document_id__delete
+    - create_documents_file_upload_api_v1_documents_fileupload_post
+    - create_url_document_api_v1_documents_url_post
+    - search_documents_api_v1_documents_search_get
+    - get_document_by_chunk_id_api_v1_documents_by_chunk__chunk_id__get
+    # sources: picker title search, reader manifest, citation neighbours
+    - search_document_titles_api_v1_documents_search_titles_get
+    - get_document_view_manifest_api_v1_workspaces__workspace_id__documents__document_id__view_manifest_get
+    - get_document_chunks_paginated_api_v1_documents__document_id__chunks_get
+    # chat
+    - list_threads_api_v1_threads_get
+    - create_thread_api_v1_threads_post
+    - list_messages_api_v1_threads__thread_id__messages_get
+    - handle_new_chat_api_v1_new_chat_post
+    # approvals: the paused-turn card (resume itself is an SSE stream, hand-written like new_chat)
+    - get_pending_interrupts_api_v1_threads__thread_id__pending_interrupts_get
+    # turn status: the app waits for a turn whose stream it lost to finish on the server, then reloads
+    - get_turn_status_api_v1_threads__thread_id__turn_status_get
+    # chat management: drawer rename/archive/delete, server search, edit pre-flight (regenerate is SSE, hand-written)
+    - search_threads_api_v1_threads_search_get
+    - update_thread_api_v1_threads__thread_id__put
+    - delete_thread_api_v1_threads__thread_id__delete
+    - list_thread_actions_api_v1_threads__thread_id__actions_get
+    # models: the workspace chat-model picker
+    - list_global_connections_api_v1_global_model_connections_get
+    - list_connections_api_v1_model_connections_get
+    - get_model_roles_api_v1_workspaces__workspace_id__model_roles_get
+    - update_model_roles_api_v1_workspaces__workspace_id__model_roles_put

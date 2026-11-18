@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "content_type": "application/json",
+  "body": {
+    "task_id": "job_725ae477379fced42b5e0395",
+    "status": "running",
+    "created_at": "2026-11-06T14:19:13Z",
+    "started_at": "2026-11-06T14:19:13Z",
+    "output_formats": [
+      "default"
+    ],
+    "progress": {
+      "completed": 0,
+      "failed": 0,
+      "total": 1
+    },
+    "files": [
+      {
+        "file_id": "file-3e18cc1d0d3366e60d94436f",
+        "file_name": "fracture.pdf",
+        "status": "running",
+        "bytes": 9829390
+      }
+    ]
+  }
+}

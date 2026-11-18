@@ -1,0 +1,42 @@
+# AI services for Monoshiri: llama.cpp embedder and reranker, plus the embed-proxy.
+# Joins the external network ai-infra (docker network create ai-infra).
+# Put the two GGUF files in ${MODELS_DIR:-./models}.
+# The host ports below are bound to loopback and are only for testing from this host
+# (curl http://127.0.0.1:11436/...). Monoshiri reaches the services by name on ai-infra, so
+# you can remove them.
+services:
+  llamacpp-embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    devices: [/dev/kfd, /dev/dri]
+    group_add: ["992"]          # the host's `render` group id: getent group render
+    volumes: ["${MODELS_DIR:-./models}:/models:ro"]
+    command: [--host, 0.0.0.0, --port, "11436",
+              --model, /models/Qwen3-Embedding-8B-Q4_K_M.gguf, --alias, qwen3-embedding-8b,
+              --n-gpu-layers, "999", --embeddings,
+              --ctx-size, "16384", --parallel, "2", --cont-batching,
+              --cache-ram, "0"]
+    ports: ["127.0.0.1:11436:11436"]
+    networks: [ai-infra]
+    restart: unless-stopped
+  llamacpp-rerank:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    devices: [/dev/kfd, /dev/dri]
+    group_add: ["992"]          # the host's `render` group id: getent group render
+    volumes: ["${MODELS_DIR:-./models}:/models:ro"]
+    command: [--host, 0.0.0.0, --port, "11438",
+              --model, /models/qwen3-reranker-0.6b-q8_0.gguf, --alias, qwen3-reranker-0.6b,
+              --n-gpu-layers, "999", --reranking,
+              --ctx-size, "16384", --parallel, "4", --cont-batching,
+              --cache-ram, "512"]
+    ports: ["127.0.0.1:11438:11438"]
+    networks: [ai-infra]
+    restart: unless-stopped
+  embed-proxy:
+    build: ./embed-proxy
+    environment: { UPSTREAM_BASE: "http://llamacpp-embed:11436", TARGET_DIM: "2000",
+                   MAX_INPUT_CHARS: "8000", UPSTREAM_TIMEOUT: "1800" }
+    ports: ["127.0.0.1:11440:8000"]
+    networks: [ai-infra]
+    restart: unless-stopped
+networks:
+  ai-infra: { external: true }

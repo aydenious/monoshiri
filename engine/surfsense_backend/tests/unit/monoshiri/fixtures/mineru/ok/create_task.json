@@ -1,0 +1,22 @@
+{
+  "status": 202,
+  "content_type": "application/json",
+  "body": {
+    "task_id": "job_725ae477379fced42b5e0395",
+    "status": "waiting-file",
+    "files": [
+      {
+        "file_id": "file-3e18cc1d0d3366e60d94436f",
+        "file_name": "fracture.pdf",
+        "status": "waiting-file",
+        "upload": {
+          "url": "http://mineru-api:8000/v1/tasks/job_725ae477379fced42b5e0395/uploads/file-3e18cc1d0d3366e60d94436f",
+          "headers": {
+            "Content-Type": "application/octet-stream"
+          },
+          "expires_at": 1793978353
+        }
+      }
+    ]
+  }
+}

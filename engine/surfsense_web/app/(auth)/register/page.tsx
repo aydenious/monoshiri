@@ -1,0 +1,275 @@
+"use client";
+
+import { useAtom } from "jotai";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
+import { type ExternalToast, toast } from "sonner";
+import { registerMutationAtom } from "@/atoms/auth/auth-mutation.atoms";
+import { Logo } from "@/components/Logo";
+import { useRuntimeConfig } from "@/components/providers/runtime-config";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { useSession } from "@/hooks/use-session";
+import { getAuthErrorDetails, isNetworkError, shouldRetry } from "@/lib/auth-errors";
+import { AppError, ValidationError } from "@/lib/error";
+import { trackRegistrationAttempt, trackRegistrationFailure } from "@/lib/posthog/events";
+import { AuthErrorAlert } from "../components/AuthErrorAlert";
+import { AmbientBackground } from "../login/AmbientBackground";
+
+export default function RegisterPage() {
+	const t = useTranslations("auth");
+	const tCommon = useTranslations("common");
+	const { authType } = useRuntimeConfig();
+	const [email, setEmail] = useState("");
+	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+	const [error, setError] = useState<{
+		title: string | null;
+		message: string | null;
+	}>({
+		title: null,
+		message: null,
+	});
+	const router = useRouter();
+	const session = useSession();
+	const [{ mutateAsync: register, isPending: isRegistering }] = useAtom(registerMutationAtom);
+
+	// Check authentication type and redirect if not LOCAL
+	useEffect(() => {
+		if (session.status === "authenticated") {
+			router.replace("/dashboard");
+			return;
+		}
+		if (authType !== "LOCAL") {
+			router.push("/login");
+		}
+	}, [authType, router, session.status]);
+
+	const handleSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		submitForm();
+	};
+
+	const submitForm = async () => {
+		// Form validation
+		if (password !== confirmPassword) {
+			setError({ title: t("password_mismatch"), message: t("passwords_no_match_desc") });
+			toast.error(t("password_mismatch"), {
+				description: t("passwords_no_match_desc"),
+				duration: 4000,
+			});
+			return;
+		}
+
+		setError({ title: null, message: null }); // Clear any previous errors
+
+		// Track registration attempt
+		trackRegistrationAttempt();
+
+		try {
+			// Invite-only signup: the invite token comes from the link (?invite=...)
+			const invite = new URLSearchParams(window.location.search).get("invite");
+			await register({
+				invite,
+				email,
+				password,
+				is_active: true,
+				is_superuser: false,
+				is_verified: false,
+			});
+
+			// auth_registration_success is now emitted server-side
+			// (UserManager.on_after_register) — authoritative vs. optimistic.
+
+			// Success toast
+			toast.success(t("register_success"), {
+				description: t("redirecting_login"),
+				duration: 2000,
+			});
+
+			// Small delay to show success message
+			setTimeout(() => {
+				router.push("/login?registered=true");
+			}, 500);
+		} catch (err) {
+			if (err instanceof AppError) {
+				switch (err.status) {
+					case 403: {
+						const friendlyMessage =
+							"You need a valid, unused invite link to create an account. Ask the administrator for a new one.";
+						trackRegistrationFailure("Signup is invite-only");
+						setError({ title: "Signup is invite-only", message: friendlyMessage });
+						toast.error("Signup is invite-only", {
+							description: friendlyMessage,
+							duration: 6000,
+						});
+						return;
+					}
+					default:
+						break;
+				}
+
+				if (err instanceof ValidationError) {
+					trackRegistrationFailure(err.message);
+					setError({ title: err.name, message: err.message });
+					toast.error(err.name, {
+						description: err.message,
+						duration: 6000,
+					});
+					return;
+				}
+			}
+
+			// Use auth-errors utility to get proper error details
+			let errorCode = "UNKNOWN_ERROR";
+
+			if (err instanceof Error) {
+				errorCode = err.message;
+			} else if (isNetworkError(err)) {
+				errorCode = "NETWORK_ERROR";
+			}
+
+			// Track registration failure
+			trackRegistrationFailure(errorCode);
+
+			// Get detailed error information from auth-errors utility
+			const errorDetails = getAuthErrorDetails(errorCode);
+
+			// Set persistent error display
+			setError({ title: errorDetails.title, message: errorDetails.description });
+
+			// Show error toast with conditional retry action
+			const toastOptions: ExternalToast = {
+				description: errorDetails.description,
+				duration: 6000,
+			};
+
+			// Add retry action if the error is retryable
+			if (shouldRetry(errorCode)) {
+				toastOptions.action = {
+					label: tCommon("retry"),
+					onClick: () => submitForm(),
+				};
+			}
+
+			toast.error(errorDetails.title, toastOptions);
+		}
+	};
+
+	return (
+		<div className="relative w-full overflow-hidden">
+			<AmbientBackground />
+			<div className="mx-auto flex h-screen max-w-lg flex-col items-center justify-center px-6 md:px-0">
+				<Logo priority className="h-16 w-16 md:h-32 md:w-32 rounded-md transition-all" />
+				<h1 className="mt-4 mb-6 text-xl font-bold text-neutral-800 dark:text-neutral-100 md:mt-8 md:mb-8 md:text-3xl lg:text-4xl transition-all">
+					{t("create_account")}
+				</h1>
+
+				<div className="w-full max-w-md">
+					<form onSubmit={handleSubmit} className="space-y-3 md:space-y-4">
+						{/* Enhanced Error Display */}
+						<AuthErrorAlert
+							error={error}
+							onDismiss={() => setError({ title: null, message: null })}
+							className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-900 shadow-sm dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-200"
+							iconClassName="flex-shrink-0 mt-0.5 text-red-500 dark:text-red-400"
+							messageClassName="text-sm text-red-700 dark:text-red-300"
+							dismissClassName="size-6 flex-shrink-0 text-red-500 hover:bg-transparent hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
+						/>
+
+						<div>
+							<label htmlFor="email" className="block text-sm font-medium text-foreground">
+								{t("email")}
+							</label>
+							<input
+								id="email"
+								type="email"
+								autoComplete="email"
+								required
+								maxLength={254}
+								placeholder="you@example.com"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								className={`mt-1 block w-full rounded-md border px-3 py-1.5 md:py-2 shadow-sm focus:outline-none focus:ring-1 bg-background text-foreground transition-all ${
+									error.title
+										? "border-destructive focus:border-destructive focus:ring-destructive/40"
+										: "border-border focus:border-primary focus:ring-primary/40"
+								}`}
+								disabled={isRegistering}
+							/>
+						</div>
+
+						<div>
+							<label htmlFor="password" className="block text-sm font-medium text-foreground">
+								{t("password")}
+							</label>
+							<input
+								id="password"
+								type="password"
+								autoComplete="new-password"
+								required
+								placeholder="Enter your password"
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								className={`mt-1 block w-full rounded-md border px-3 py-1.5 md:py-2 shadow-sm focus:outline-none focus:ring-1 bg-background text-foreground transition-all ${
+									error.title
+										? "border-destructive focus:border-destructive focus:ring-destructive/40"
+										: "border-border focus:border-primary focus:ring-primary/40"
+								}`}
+								disabled={isRegistering}
+							/>
+						</div>
+
+						<div>
+							<label
+								htmlFor="confirmPassword"
+								className="block text-sm font-medium text-foreground"
+							>
+								{t("confirm_password")}
+							</label>
+							<input
+								id="confirmPassword"
+								type="password"
+								autoComplete="new-password"
+								required
+								placeholder="Confirm your password"
+								value={confirmPassword}
+								onChange={(e) => setConfirmPassword(e.target.value)}
+								className={`mt-1 block w-full rounded-md border px-3 py-1.5 md:py-2 shadow-sm focus:outline-none focus:ring-1 bg-background text-foreground transition-all ${
+									error.title
+										? "border-destructive focus:border-destructive focus:ring-destructive/40"
+										: "border-border focus:border-primary focus:ring-primary/40"
+								}`}
+								disabled={isRegistering}
+							/>
+						</div>
+
+						<Button
+							type="submit"
+							disabled={isRegistering}
+							className="relative h-auto w-full px-4 py-1.5 text-sm md:py-2 md:text-base"
+						>
+							<span className={isRegistering ? "invisible" : ""}>{t("register")}</span>
+							{isRegistering && (
+								<span className="absolute inset-0 flex items-center justify-center gap-2">
+									<Spinner size="sm" className="text-primary-foreground" />
+								</span>
+							)}
+						</Button>
+					</form>
+
+					<div className="mt-4 text-center text-sm">
+						<p className="text-muted-foreground">
+							{t("already_have_account")}{" "}
+							<Link href="/login" className="font-medium text-primary hover:text-primary/90">
+								{t("sign_in")}
+							</Link>
+						</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
