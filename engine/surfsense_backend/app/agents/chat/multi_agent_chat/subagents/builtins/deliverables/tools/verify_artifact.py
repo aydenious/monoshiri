@@ -5,6 +5,9 @@ from __future__ import annotations
 from langchain.tools import ToolRuntime
 from langchain_core.tools import BaseTool, tool
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.artifacts.infographic.selection import read_generation_state
 from app.artifacts.verification.formats.registry import (
     VerifiableArtifactFormat,
@@ -17,8 +20,6 @@ from app.config import config as app_config
 from app.db import shielded_async_session
 from app.sandbox import get_registry
 from app.services.llm_service import get_vision_llm
-
-from .thread_resolver import resolve_root_thread_id
 
 
 def create_verify_artifact_tool(*, workspace_id: int) -> BaseTool:

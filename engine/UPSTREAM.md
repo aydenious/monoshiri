@@ -13,6 +13,12 @@ Not imported: `surfsense_local/`, `surfsense_mcp/`, `plugins/`, the rest of `doc
 and landing-page media (`surfsense_web/public/homepage/`, `public/demo.mp4`, ~210 MB — only used by the
 marketing pages, referenced by URL string, never statically imported).
 
+The one exception under `docker/` is the code sandbox: `docker/sandbox/` (Dockerfile, `skills/`,
+`remotion/`) is copied unchanged to `engine/docker/sandbox/`, and `docker/opensandbox/sandbox.toml` is
+copied unchanged to `deploy/opensandbox/`, `deploy/test/opensandbox/` and `public/deploy/opensandbox/`.
+All stay upstream code: `diff -r` against `reference/surfsense-upstream/docker/sandbox` is empty, and so is
+`diff` on each toml.
+
 Licences kept as upstream: `LICENSE` (Apache-2.0, backend), `surfsense_web/LICENSE` (MIT),
 `surfsense_backend/app/proprietary/LICENSE` (BSL 1.1).
 

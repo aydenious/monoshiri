@@ -10,10 +10,11 @@ from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from sqlalchemy import case, select
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    root_thread_id_from_config,
+)
 from app.artifacts.persistence import Artifact, ArtifactFile, ArtifactFileRole
 from app.db import Document, shielded_async_session
-
-from ..tools.thread_resolver import root_thread_id_from_config
 
 _ROSTER_LIMIT = 10
 

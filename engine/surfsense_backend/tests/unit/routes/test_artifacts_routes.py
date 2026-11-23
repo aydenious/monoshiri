@@ -4,12 +4,15 @@ from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
-from fastapi import Response
+from fastapi import FastAPI, Response
+from fastapi.encoders import jsonable_encoder
 from starlette.requests import Request
+from starlette.testclient import TestClient
 
 from app.artifacts.persistence import ArtifactFileRole
-from app.db import Permission
+from app.db import Permission, get_async_session
 from app.routes import artifacts_routes
+from app.users import get_auth_context
 
 USER_1 = UUID("00000000-0000-0000-0000-000000000001")
 USER_2 = UUID("00000000-0000-0000-0000-000000000002")
@@ -892,3 +895,556 @@ async def test_video_payload_rewrites_slide_audio_urls(monkeypatch):
     )
     assert "audio_storage_key" not in result["slides"][0]
     assert result["scene_codes"][0]["code"] == " cons()"
+
+
+# ---------------------------------------------------------------------------
+# Typed responses: these go through FastAPI serialization (response_model)
+# instead of calling the route functions directly, which bypasses it.
+# ---------------------------------------------------------------------------
+
+
+def _http_app(session, auth=None):
+    """Minimal app mounting the real artifacts router with fake dependencies."""
+    api = FastAPI()
+    api.include_router(artifacts_routes.router, prefix="/api/v1")
+
+    async def _session_override():
+        yield session
+
+    api.dependency_overrides[get_async_session] = _session_override
+    api.dependency_overrides[get_auth_context] = lambda: (
+        auth if auth is not None else SimpleNamespace()
+    )
+    return TestClient(api)
+
+
+def _manifest_artifact(fmt: str):
+    return SimpleNamespace(
+        id=7,
+        document_id=9,
+        format=fmt,
+        generation=1,
+        artifact_metadata=None,
+        updated_at=None,
+        files=[],
+    )
+
+
+def _manifest_document():
+    return SimpleNamespace(
+        id=9,
+        title="Report",
+        content_hash="hash",
+        source_markdown="# Report",
+        content="# Report",
+    )
+
+
+def test_openapi_has_typed_artifact_responses():
+    from app.app import app as fastapi_app
+
+    schema = fastapi_app.openapi()
+
+    def response_schema(path: str, method: str) -> dict:
+        return schema["paths"][path][method]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+
+    manifest = response_schema(
+        "/api/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/manifest", "get"
+    )
+    assert manifest["$ref"].endswith("ArtifactManifest")
+
+    listing = response_schema("/api/v1/workspaces/{workspace_id}/artifacts", "get")
+    assert listing["type"] == "array"
+    assert listing["items"]["$ref"].endswith("ArtifactListItem")
+
+    retake = response_schema(
+        "/api/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-retake", "post"
+    )
+    assert retake["$ref"].endswith("QuizState")
+
+    order = response_schema(
+        "/api/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-order",
+        "put",
+    )
+    assert order["$ref"].endswith("FlashcardStudyState")
+
+
+def test_manifest_keeps_null_updated_at_and_omits_unset_keys(monkeypatch):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    session = _row_result((_manifest_artifact("pdf"), _manifest_document()))
+
+    response = _http_app(session).get("/api/v1/workspaces/2/artifacts/7/manifest")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated_at"] is None
+    assert "legacy" not in body
+    assert "flashcard_study_state" not in body
+    assert "quiz_state" not in body
+
+
+@pytest.mark.parametrize("fmt", ["pptx", "mindmap"])
+def test_manifest_omits_state_for_other_formats(monkeypatch, fmt):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    session = _row_result((_manifest_artifact(fmt), _manifest_document()))
+
+    response = _http_app(session).get("/api/v1/workspaces/2/artifacts/7/manifest")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["format"] == fmt
+    assert "flashcard_study_state" not in body
+    assert "quiz_state" not in body
+
+
+def test_list_item_omits_legacy_when_absent(monkeypatch):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    artifact = SimpleNamespace(
+        id=7,
+        document_id=9,
+        format="markdown",
+        generation=1,
+        thread_id=None,
+        created_at=SimpleNamespace(isoformat=lambda: "2026-01-01T00:00:00+00:00"),
+        updated_at=SimpleNamespace(isoformat=lambda: "2026-01-02T00:00:00+00:00"),
+        artifact_metadata=None,
+    )
+    document = SimpleNamespace(title="Note", status={"state": "ready"})
+    session = _rows_result([(artifact, document)])
+
+    response = _http_app(session).get("/api/v1/workspaces/2/artifacts")
+
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert "legacy" not in item
+    assert item["updated_at"] == "2026-01-02T00:00:00+00:00"
+
+
+# ---------------------------------------------------------------------------
+# Whole-body comparisons: expected is the route's own dict built from the same
+# helpers, then compared with ``==`` against the HTTP response so a response
+# model that silently drops a key fails the test.
+# ---------------------------------------------------------------------------
+
+_DECK_CARD_COUNT = 15
+_QUIZ_QUESTION_COUNT = 5
+
+
+def _expected_manifest_payload(artifact, document, *, user_id):
+    payload = {
+        "artifact_id": artifact.id,
+        "document_id": document.id,
+        "title": document.title,
+        "format": artifact.format,
+        "generation": artifact.generation,
+        "markdown_representation": document.source_markdown or document.content,
+        "files": [
+            artifacts_routes._file_manifest(2, artifact.id, record)
+            for record in artifacts_routes._visible_files(artifact)
+        ],
+        "updated_at": (
+            artifact.updated_at.isoformat() if artifact.updated_at else None
+        ),
+    }
+    legacy = artifacts_routes._legacy_ref(artifact)
+    if legacy is not None:
+        payload["legacy"] = legacy
+    if artifact.format == "flashcards":
+        payload["flashcard_study_state"] = (
+            artifacts_routes.sanitize_flashcard_study_state(
+                artifact.artifact_metadata,
+                user_id=user_id,
+                generation=artifact.generation,
+                card_count=_DECK_CARD_COUNT,
+            )
+        )
+    elif artifact.format == "quiz":
+        payload["quiz_state"] = artifacts_routes.sanitize_quiz_state(
+            artifact.artifact_metadata,
+            user_id=user_id,
+            generation=artifact.generation,
+            question_count=_QUIZ_QUESTION_COUNT,
+        )
+    return payload
+
+
+def _manifest_fixture(case: str):
+    artifact = SimpleNamespace(
+        id=7,
+        document_id=9,
+        format="pdf",
+        generation=1,
+        artifact_metadata=None,
+        updated_at=None,
+        files=[],
+    )
+    document = SimpleNamespace(
+        id=9,
+        title="Report",
+        content_hash="hash",
+        source_markdown="# Report",
+        content="# Report",
+    )
+    stream_payload = None
+    auth = SimpleNamespace()
+    if case == "pdf-primary":
+        artifact.files = [_file(1, ArtifactFileRole.PRIMARY)]
+    elif case == "pptx-primary-preview":
+        artifact.format = "pptx"
+        artifact.files = [
+            _file(2, ArtifactFileRole.PREVIEW),
+            _file(1, ArtifactFileRole.PRIMARY),
+        ]
+    elif case == "podcast-legacy":
+        artifact.format = "podcast"
+        artifact.artifact_metadata = {"legacy": {"kind": "podcast", "id": 42}}
+    elif case == "flashcards-state":
+        artifact.format = "flashcards"
+        primary = _file(1, ArtifactFileRole.PRIMARY)
+        primary.original_filename = "deck.json"
+        primary.mime_type = "application/json"
+        artifact.files = [primary]
+        artifact.artifact_metadata = {
+            "flashcards": {
+                "study_by_user": {
+                    str(USER_1): {
+                        "generation": 1,
+                        "marks": {"0": "good", "3": "again"},
+                        "order": list(reversed(range(_DECK_CARD_COUNT))),
+                    }
+                }
+            }
+        }
+        stream_payload = _flashcard_deck()
+        auth = SimpleNamespace(user=SimpleNamespace(id=USER_1))
+    elif case == "quiz-state":
+        artifact.format = "quiz"
+        primary = _file(1, ArtifactFileRole.PRIMARY)
+        primary.original_filename = "quiz.json"
+        primary.mime_type = "application/json"
+        artifact.files = [primary]
+        artifact.artifact_metadata = {
+            "quiz": {
+                "progress_by_user": {
+                    str(USER_1): {
+                        "generation": 1,
+                        "mode": "all",
+                        "active_question_indices": list(
+                            range(_QUIZ_QUESTION_COUNT)
+                        ),
+                        "answers": {"0": 0, "2": 3},
+                        "skipped_question_indices": [1],
+                    }
+                }
+            }
+        }
+        stream_payload = _quiz()
+        auth = SimpleNamespace(user=SimpleNamespace(id=USER_1))
+    return artifact, document, stream_payload, auth
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "pdf-primary",
+        "pptx-primary-preview",
+        "podcast-legacy",
+        "flashcards-state",
+        "quiz-state",
+    ],
+)
+def test_manifest_response_matches_route_payload_through_http(monkeypatch, case):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    artifact, document, stream_payload, auth = _manifest_fixture(case)
+    if stream_payload is not None:
+
+        async def stream(_record):
+            yield stream_payload
+
+        monkeypatch.setattr(artifacts_routes, "open_artifact_file_stream", stream)
+    user_id = getattr(getattr(auth, "user", None), "id", USER_1)
+
+    response = _http_app(
+        _row_result((artifact, document)), auth=auth
+    ).get("/api/v1/workspaces/2/artifacts/7/manifest")
+
+    assert response.status_code == 200
+    expected = _expected_manifest_payload(artifact, document, user_id=user_id)
+    assert response.json() == jsonable_encoder(expected)
+
+
+def test_list_response_matches_route_dicts_through_http(monkeypatch):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    rows = [
+        (
+            SimpleNamespace(
+                id=7,
+                document_id=9,
+                format="markdown",
+                generation=1,
+                thread_id=None,
+                created_at=SimpleNamespace(
+                    isoformat=lambda: "2026-01-01T00:00:00+00:00"
+                ),
+                updated_at=None,
+                artifact_metadata=None,
+            ),
+            SimpleNamespace(title="No updates", status={"state": "ready"}),
+        ),
+        (
+            SimpleNamespace(
+                id=8,
+                document_id=10,
+                format="pptx",
+                generation=2,
+                thread_id=3,
+                created_at=SimpleNamespace(
+                    isoformat=lambda: "2026-01-02T00:00:00+00:00"
+                ),
+                updated_at=SimpleNamespace(
+                    isoformat=lambda: "2026-01-03T04:05:06+00:00"
+                ),
+                artifact_metadata=None,
+            ),
+            SimpleNamespace(title="Updated", status={"state": "processing"}),
+        ),
+        (
+            SimpleNamespace(
+                id=9,
+                document_id=11,
+                format="podcast",
+                generation=1,
+                thread_id=None,
+                created_at=SimpleNamespace(
+                    isoformat=lambda: "2026-01-04T00:00:00+00:00"
+                ),
+                updated_at=None,
+                artifact_metadata={"legacy": {"kind": "podcast", "id": 42}},
+            ),
+            SimpleNamespace(title="Episode", status={"state": "ready"}),
+        ),
+    ]
+
+    response = _http_app(_rows_result(rows)).get("/api/v1/workspaces/2/artifacts")
+
+    assert response.status_code == 200
+    expected = [
+        artifacts_routes._list_item(artifact, document)
+        for artifact, document in rows
+    ]
+    assert response.json() == jsonable_encoder(expected)
+
+
+def _flashcard_mutation_artifact(metadata):
+    primary = _file(1, ArtifactFileRole.PRIMARY)
+    primary.original_filename = "deck.json"
+    primary.mime_type = "application/json"
+    return SimpleNamespace(
+        id=7,
+        format="flashcards",
+        generation=3,
+        artifact_metadata=metadata,
+        updated_at=object(),
+        files=[primary],
+    )
+
+
+def _flashcard_mutations():
+    reversed_order = list(reversed(range(_DECK_CARD_COUNT)))
+    existing_state = {
+        "flashcards": {
+            "study_by_user": {
+                str(USER_1): {
+                    "generation": 3,
+                    "marks": {"0": "good"},
+                    "order": reversed_order,
+                }
+            }
+        }
+    }
+    return [
+        pytest.param(
+            "patch",
+            "/api/v1/workspaces/2/artifacts/7/flashcard-progress",
+            {"generation": 3, "card_index": 1, "mark": "again"},
+            None,
+            None,
+            lambda metadata: artifacts_routes.apply_flashcard_mark(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                card_count=_DECK_CARD_COUNT,
+                card_index=1,
+                mark="again",
+            )[1],
+            id="progress-patch",
+        ),
+        pytest.param(
+            "delete",
+            "/api/v1/workspaces/2/artifacts/7/flashcard-progress",
+            None,
+            {"generation": 3},
+            existing_state,
+            lambda metadata: artifacts_routes.reset_flashcard_progress(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                card_count=_DECK_CARD_COUNT,
+            )[1],
+            id="progress-delete",
+        ),
+        pytest.param(
+            "put",
+            "/api/v1/workspaces/2/artifacts/7/flashcard-order",
+            {"generation": 3, "order": reversed_order},
+            None,
+            None,
+            lambda metadata: artifacts_routes.apply_flashcard_order(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                card_count=_DECK_CARD_COUNT,
+                order=reversed_order,
+            )[1],
+            id="order-put",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "params", "metadata", "expected_state"),
+    _flashcard_mutations(),
+)
+def test_flashcard_mutation_response_matches_route_state_through_http(
+    monkeypatch, method, path, body, params, metadata, expected_state
+):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    monkeypatch.setattr(artifacts_routes, "flag_modified", Mock())
+
+    async def stream(_record):
+        yield _flashcard_deck()
+
+    monkeypatch.setattr(artifacts_routes, "open_artifact_file_stream", stream)
+    session = AsyncMock()
+    session.scalar.side_effect = [
+        _flashcard_mutation_artifact(None),
+        _flashcard_mutation_artifact(metadata),
+    ]
+    expected = expected_state(metadata)
+
+    response = _http_app(
+        session, auth=SimpleNamespace(user=SimpleNamespace(id=USER_1))
+    ).request(method.upper(), path, json=body, params=params)
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected)
+
+
+def _quiz_mutation_artifact(metadata):
+    primary = _file(1, ArtifactFileRole.PRIMARY)
+    primary.original_filename = "quiz.json"
+    primary.mime_type = "application/json"
+    return SimpleNamespace(
+        id=7,
+        format="quiz",
+        generation=3,
+        artifact_metadata=metadata,
+        updated_at=object(),
+        files=[primary],
+    )
+
+
+def _quiz_mutations():
+    correct = [index % 4 for index in range(_QUIZ_QUESTION_COUNT)]
+    complete_state = {
+        "quiz": {
+            "progress_by_user": {
+                str(USER_1): {
+                    "generation": 3,
+                    "mode": "all",
+                    "active_question_indices": list(range(_QUIZ_QUESTION_COUNT)),
+                    "answers": {
+                        str(index): index % 4
+                        for index in range(_QUIZ_QUESTION_COUNT)
+                    },
+                    "skipped_question_indices": [],
+                }
+            }
+        }
+    }
+    return [
+        pytest.param(
+            "put",
+            "/api/v1/workspaces/2/artifacts/7/quiz-answer",
+            {"generation": 3, "question_index": 1, "selected_option_index": 2},
+            None,
+            lambda metadata: artifacts_routes.apply_quiz_answer(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                question_count=_QUIZ_QUESTION_COUNT,
+                question_index=1,
+                selected_option_index=2,
+            )[1],
+            id="answer-put",
+        ),
+        pytest.param(
+            "put",
+            "/api/v1/workspaces/2/artifacts/7/quiz-skip",
+            {"generation": 3, "question_index": 1},
+            None,
+            lambda metadata: artifacts_routes.apply_quiz_skip(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                question_count=_QUIZ_QUESTION_COUNT,
+                question_index=1,
+            )[1],
+            id="skip-put",
+        ),
+        pytest.param(
+            "post",
+            "/api/v1/workspaces/2/artifacts/7/quiz-retake",
+            {"generation": 3, "mode": "all"},
+            complete_state,
+            lambda metadata: artifacts_routes.apply_quiz_retake(
+                metadata,
+                user_id=USER_1,
+                generation=3,
+                correct_option_indices=correct,
+                mode="all",
+            )[1],
+            id="retake-post",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "metadata", "expected_state"),
+    _quiz_mutations(),
+)
+def test_quiz_mutation_response_matches_route_state_through_http(
+    monkeypatch, method, path, body, metadata, expected_state
+):
+    monkeypatch.setattr(artifacts_routes, "check_permission", AsyncMock())
+    monkeypatch.setattr(artifacts_routes, "flag_modified", Mock())
+
+    async def stream(_record):
+        yield _quiz()
+
+    monkeypatch.setattr(artifacts_routes, "open_artifact_file_stream", stream)
+    session = AsyncMock()
+    session.scalar.side_effect = [
+        _quiz_mutation_artifact(None),
+        _quiz_mutation_artifact(metadata),
+    ]
+    expected = expected_state(metadata)
+
+    response = _http_app(
+        session, auth=SimpleNamespace(user=SimpleNamespace(id=USER_1))
+    ).request(method.upper(), path, json=body)
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain.agents.middleware.tool_error import ToolErrorMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
@@ -26,6 +27,17 @@ _INTERACTIVE_VIDEO_PROMPT = """
 **Video requests.** Call `enqueue_deliverable_job` exactly once and return its
 Receipt immediately.
 """.strip()
+
+
+def _tool_error_content(exc: Exception, request: Any) -> str | None:
+    """Return a tool's ``ValueError`` to the model so it can fix its arguments.
+
+    Tool messages are written for the model. Anything else (for example
+    ``SandboxUnavailableError``, whose diagnostic iOS reads) must end the turn.
+    """
+    if isinstance(exc, ValueError):
+        return f"Error: {exc}"
+    return None
 
 
 def build_subagent(
@@ -51,6 +63,7 @@ def build_subagent(
             "artifact_roster": ArtifactRosterMiddleware(
                 workspace_id=dependencies["workspace_id"]
             ),
+            "tool_errors": ToolErrorMiddleware(_tool_error_content),
         },
         mcp_tools=mcp_tools,
         system_prompt_suffix=suffix,

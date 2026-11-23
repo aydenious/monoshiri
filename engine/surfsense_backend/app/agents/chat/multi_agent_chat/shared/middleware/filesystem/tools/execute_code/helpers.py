@@ -16,6 +16,9 @@ from langchain.tools import ToolRuntime
 from app.agents.chat.multi_agent_chat.shared.state.filesystem_state import (
     SurfSenseFilesystemState,
 )
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.config import config as app_config
 from app.sandbox import ExecResult, SandboxUnavailableError, get_registry
 
@@ -34,10 +37,15 @@ async def execute_in_sandbox(
     timeout: int | None,
 ) -> str:
     """Top-level entry: run *command* as Python, retrying once."""
-    assert mw._thread_id is not None
+    # The compiled graph is shared across chats, so the thread captured at
+    # build time may belong to another chat: always use the live one.
+    try:
+        thread_id = resolve_root_thread_id(runtime)
+    except RuntimeError:
+        return "Error: Code execution is unavailable: no live chat thread."
     effective_timeout = timeout or MAX_EXECUTE_TIMEOUT
     try:
-        return _format(await _run(mw, command, effective_timeout))
+        return _format(await _run(mw, thread_id, command, effective_timeout))
     except SandboxUnavailableError as err:
         return f"Error: {err}"
     except TimeoutError:
@@ -51,28 +59,28 @@ async def execute_in_sandbox(
     except Exception as first_err:
         logger.exception(
             "Sandbox execute failed for thread %s, retrying: %s",
-            mw._thread_id,
+            thread_id,
             first_err,
         )
         try:
             # Terminate rather than evict: a session that failed mid-execution
             # may have a wedged kernel, and reconnecting would inherit it.
             registry = await get_registry()
-            await registry.terminate(mw._thread_id)
-            return _format(await _run(mw, command, effective_timeout))
+            await registry.terminate(thread_id)
+            return _format(await _run(mw, thread_id, command, effective_timeout))
         except Exception:
-            logger.exception("Sandbox retry also failed for thread %s", mw._thread_id)
+            logger.exception("Sandbox retry also failed for thread %s", thread_id)
             return "Error: Code execution is temporarily unavailable. Please try again."
 
 
 async def _run(
-    mw: SurfSenseFilesystemMiddleware, code: str, timeout: int
+    mw: SurfSenseFilesystemMiddleware, thread_id: int, code: str, timeout: int
 ) -> ExecResult:
     registry = await get_registry()
     # Without a workspace every such thread would share one cap bucket and
     # block each other, so an unknown workspace gets a bucket of its own.
-    workspace_id = mw._workspace_id if mw._workspace_id is not None else mw._thread_id
-    session = await registry.get_session(mw._thread_id, workspace_id)
+    workspace_id = mw._workspace_id if mw._workspace_id is not None else thread_id
+    session = await registry.get_session(thread_id, workspace_id)
     return await asyncio.wait_for(
         session.execute(code, language="python"),
         timeout=timeout,

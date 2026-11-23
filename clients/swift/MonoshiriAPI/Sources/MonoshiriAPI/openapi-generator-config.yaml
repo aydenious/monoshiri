@@ -51,3 +51,13 @@ filter:
     - list_connections_api_v1_model_connections_get
     - get_model_roles_api_v1_workspaces__workspace_id__model_roles_get
     - update_model_roles_api_v1_workspaces__workspace_id__model_roles_put
+    # studio: the workspace's outputs, their manifest and files, flashcard and quiz study state
+    - list_artifacts_api_v1_workspaces__workspace_id__artifacts_get
+    - get_artifact_manifest_api_v1_workspaces__workspace_id__artifacts__artifact_id__manifest_get
+    - delete_artifact_api_v1_workspaces__workspace_id__artifacts__artifact_id__delete
+    - update_flashcard_progress_api_v1_workspaces__workspace_id__artifacts__artifact_id__flashcard_progress_patch
+    - reset_artifact_flashcard_progress_api_v1_workspaces__workspace_id__artifacts__artifact_id__flashcard_progress_delete
+    - update_flashcard_order_api_v1_workspaces__workspace_id__artifacts__artifact_id__flashcard_order_put
+    - update_quiz_answer_api_v1_workspaces__workspace_id__artifacts__artifact_id__quiz_answer_put
+    - skip_quiz_question_api_v1_workspaces__workspace_id__artifacts__artifact_id__quiz_skip_put
+    - retake_quiz_api_v1_workspaces__workspace_id__artifacts__artifact_id__quiz_retake_post

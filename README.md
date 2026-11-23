@@ -65,6 +65,7 @@ Three Docker Compose stacks share two external networks, so the AI services can 
 | `db` | `pgvector/pgvector:pg17` | 5432 | none | **needs `wal_level = logical`** (zero-cache) |
 | `redis` | `redis:8-alpine` | 6379 | none | Celery broker, invite markers |
 | `searxng` | `searxng/searxng:2026.3.13-3c1f68c59` | 8080 | none | web search in chat; needs `json` in `search.formats` |
+| `opensandbox-server` | `opensandbox/server:v0.2.2` | 8080 | none | creates the Studio sandbox containers; needs the Docker socket (see below) |
 | `llamacpp-embed` | `ghcr.io/ggml-org/llama.cpp:server-<backend>` | 11436 | `127.0.0.1:11436` | Qwen3-Embedding-8B, 4096-d |
 | `embed-proxy` | built from `deploy/ai/embed-proxy` | 8000 | `127.0.0.1:11440` | truncates 4096-d → 2000-d (see below) |
 | `llamacpp-rerank` | `ghcr.io/ggml-org/llama.cpp:server-<backend>` | 11438 | `127.0.0.1:11438` | Qwen3-Reranker-0.6B, `/v1/rerank` |
@@ -230,6 +231,41 @@ Operational notes:
   database: the fork's tables were stripped, and the upstream migration chain no longer matches.
 - After recreating `backend` or `frontend`, run `docker compose restart zero-cache`, or the
   Documents panel goes blank (zero-cache keeps old container IPs).
+
+## Code sandbox (Studio outputs)
+
+Mind maps, flashcards, quizzes, slide decks and PDF/DOCX reports are rendered in a short-lived
+sandbox container. The `opensandbox-server` service creates those containers on the host Docker
+daemon (it mounts `/var/run/docker.sock`) and the backend reaches it by name on the compose network;
+the server itself publishes no host port.
+
+Each sandbox takes 1 CPU and 2 GiB. A workspace may have `SANDBOX_MAX_SESSIONS_PER_WORKSPACE` (2)
+alive at once, and a chat keeps its sandbox until `SANDBOX_IDLE_TTL_SECONDS` (300) pass with no use.
+A third output started inside that window fails with "Sandbox limit reached for this workspace";
+wait a few minutes, or raise the cap if the host has the memory.
+
+The sandbox ships turned off (`SANDBOX_ENABLED=FALSE`). Add the firewall rule below first, then
+build the image and set `SANDBOX_ENABLED=TRUE`. Build the sandbox image once, and keep its tag in
+`deploy/.env` as `SANDBOX_IMAGE`:
+
+```sh
+docker build -t monoshiri-sandbox:local engine/docker/sandbox
+```
+
+Turning the feature off is `SANDBOX_ENABLED=FALSE` in `deploy/.env`, then
+`docker compose up -d backend celery_worker`.
+
+**Firewall the sandbox ports.** Sandbox containers publish their own (unauthenticated) port on the
+Docker host in **20000-30000**. Drop new inbound TCP to that range from the LAN and from any VPN or
+public interface, in Docker's `DOCKER-USER` chain (rules in `INPUT` sit behind Docker's own):
+
+```sh
+iptables -I DOCKER-USER -i <iface> -p tcp -m conntrack --ctorigdstport 20000:30000 --ctdir ORIGINAL -j DROP
+```
+
+Check it is there with `iptables -S DOCKER-USER`. The rule does not survive a reboot on its own, so
+persist it (for example a oneshot systemd unit ordered after `docker.service`). The backend does not
+need those ports: it talks to the sandbox through the server proxy.
 
 ## What was removed from SurfSense 2.1.0
 

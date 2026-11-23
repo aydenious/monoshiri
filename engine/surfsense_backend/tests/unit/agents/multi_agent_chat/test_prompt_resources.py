@@ -50,6 +50,15 @@ def test_deliverables_roster_advertises_file_artifacts():
     assert all(marker in description for marker in ("mind maps", "static PNG"))
 
 
+def test_study_artifact_routing_names_the_format_and_reads_the_sources():
+    """A mind map of documents is never HTML and never built from titles alone."""
+    routing = read_prompt_md("routing.md")
+
+    assert "**Mind map, quiz, and flashcard artifacts.**" in routing
+    assert "`quiz`, or `flashcards` artifact — never HTML" in routing
+    assert "A file listing alone is not source material." in routing
+
+
 def test_presentation_routing_separates_pptx_from_video():
     """PPTX artifacts and video media have independent routing contracts."""
     routing = read_prompt_md("routing.md")

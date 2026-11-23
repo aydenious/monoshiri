@@ -242,6 +242,11 @@ def order(monkeypatch) -> list[Any]:
     monkeypatch.setattr(
         turn_mod, "end_turn", lambda thread_id: calls.append(("end_turn", thread_id))
     )
+    monkeypatch.setattr(
+        turn_mod,
+        "release_sandbox",
+        lambda thread_id: calls.append(("release_sandbox", thread_id)),
+    )
 
     async def fake_close(session, chat_id, *, clear_ai_responding=True):
         await anyio.sleep(0)
@@ -323,8 +328,10 @@ async def test_shielded_cleanup_completes_under_a_cancelled_scope(order):
 
 
 def test_release_turn_lock_ends_turn_unless_busy(order):
+    """A finished turn frees its sandbox slot; a request turned away as busy
+    must not, or a new thread could reclaim the running turn's sandbox."""
     release_turn_lock(_turn())
-    assert order == [("end_turn", "7")]
+    assert order == [("release_sandbox", 7), ("end_turn", "7")]
 
     order.clear()
     release_turn_lock(_turn(busy_error_raised=True))

@@ -11,6 +11,9 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.capabilities.core import ActivityDescriptor
 from app.db import shielded_async_session
 from app.deliverables.jobs.dispatch import (
@@ -21,7 +24,6 @@ from app.deliverables.jobs.policy import VIDEO_KIND
 from app.deliverables.jobs.service import create_deliverable_job
 
 from ._receipt import deliverable_command
-from .thread_resolver import resolve_root_thread_id
 
 logger = logging.getLogger(__name__)
 

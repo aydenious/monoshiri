@@ -11,6 +11,9 @@ from pathlib import PurePosixPath
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.artifacts import ArtifactFileInput, ArtifactFileStreamInput, save_artifact
 from app.artifacts.infographic.selection import generation_sidecar_path
 from app.artifacts.service import ArtifactInputFile
@@ -31,7 +34,6 @@ from app.db import shielded_async_session
 from app.sandbox import SandboxSession, get_registry
 
 from ._receipt import deliverable_command
-from .thread_resolver import resolve_root_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,17 @@ def _required_markdown(value: str | None) -> str:
     if value is None or not value.strip():
         raise ValueError("markdown_representation must not be empty")
     return value
+
+
+def _verified_markdown(markdown: str, expected_sha256: str, format_name: str) -> str:
+    """The verified Markdown, when the model's copy differs only in trailing newlines."""
+    for candidate in (markdown, markdown.rstrip("\n") + "\n", markdown.rstrip("\n")):
+        if sha256_bytes(candidate.encode("utf-8")) == expected_sha256:
+            return candidate
+    raise ValueError(
+        f"The {format_name} Markdown changed after verification. "
+        "Verify both files again, then save."
+    )
 
 
 async def _read_artifact_file(
@@ -208,14 +221,11 @@ def create_save_artifact_tool(workspace_id: int):
                                 "The verification receipt does not bind the "
                                 f"{primary_adapter.name} Markdown"
                             )
-                        if expected_markdown_hash != sha256_bytes(
-                            markdown_representation.encode("utf-8")
-                        ):
-                            raise ValueError(
-                                f"The {primary_adapter.name} Markdown changed after "
-                                "verification. "
-                                "Verify both files again, then save."
-                            )
+                        markdown_representation = _verified_markdown(
+                            markdown_representation,
+                            expected_markdown_hash,
+                            primary_adapter.name,
+                        )
                     primary: ArtifactInputFile
                     if primary_adapter.name == "video":
                         filename = PurePosixPath(path).name

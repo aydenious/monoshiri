@@ -83,12 +83,14 @@ def _valid_state(
         or any(str(index) in answers for index in raw_skipped)
     ):
         return None
+    active_question_indices = list(raw_scope)
+    skipped_question_indices = list(raw_skipped)
     return {
         "generation": generation,
         "mode": mode,
-        "active_question_indices": list(raw_scope),
+        "active_question_indices": active_question_indices,
         "answers": answers,
-        "skipped_question_indices": list(raw_skipped),
+        "skipped_question_indices": skipped_question_indices,
     }
 
 

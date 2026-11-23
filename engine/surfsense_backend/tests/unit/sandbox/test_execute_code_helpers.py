@@ -31,8 +31,10 @@ class FakeRegistry:
     def __init__(self, session: FakeSession | BaseException) -> None:
         self._session = session
         self.terminated: list[str] = []
+        self.sessions: list[tuple] = []
 
     async def get_session(self, thread_id, workspace_id):
+        self.sessions.append((thread_id, workspace_id))
         if isinstance(self._session, BaseException):
             raise self._session
         return self._session
@@ -43,7 +45,17 @@ class FakeRegistry:
 
 @pytest.fixture
 def middleware():
-    return SimpleNamespace(_thread_id="t1", _workspace_id=7)
+    return SimpleNamespace(_thread_id=43, _workspace_id=7)
+
+
+def _runtime(thread_id="1"):
+    configurable = {} if thread_id is None else {"thread_id": thread_id}
+    return SimpleNamespace(config={"configurable": configurable})
+
+
+@pytest.fixture
+def runtime():
+    return _runtime("1")
 
 
 def _install(monkeypatch, registry: FakeRegistry) -> None:
@@ -57,53 +69,59 @@ def test_execute_code_uses_the_shared_sandbox_operation_budget():
     assert helpers.MAX_EXECUTE_TIMEOUT == app_config.SANDBOX_OPERATION_TIMEOUT_SECONDS
 
 
-async def test_successful_run_reports_exit_code(monkeypatch, middleware):
+async def test_successful_run_reports_exit_code(monkeypatch, middleware, runtime):
     registry = FakeRegistry(FakeSession([ExecResult(output="42", exit_code=0)]))
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "print(42)", None, None)
+    out = await helpers.execute_in_sandbox(middleware, "print(42)", runtime, None)
 
     assert "42" in out
     assert "exit code 0" in out
     assert registry.terminated == []
 
 
-async def test_failure_is_retried_once_on_a_fresh_sandbox(monkeypatch, middleware):
+async def test_failure_is_retried_once_on_a_fresh_sandbox(
+    monkeypatch, middleware, runtime
+):
     registry = FakeRegistry(
         FakeSession([RuntimeError("kernel gone"), ExecResult(output="ok", exit_code=0)])
     )
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "print(1)", None, None)
+    out = await helpers.execute_in_sandbox(middleware, "print(1)", runtime, None)
 
     assert "ok" in out
     # The wedged session must be killed, not reused, before the retry.
-    assert registry.terminated == ["t1"]
+    assert registry.terminated == ["1"]
 
 
-async def test_second_failure_surfaces_a_usable_message(monkeypatch, middleware):
+async def test_second_failure_surfaces_a_usable_message(
+    monkeypatch, middleware, runtime
+):
     registry = FakeRegistry(
         FakeSession([RuntimeError("boom"), RuntimeError("boom again")])
     )
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "print(1)", None, None)
+    out = await helpers.execute_in_sandbox(middleware, "print(1)", runtime, None)
 
     assert out.startswith("Error:")
     assert "temporarily unavailable" in out
 
 
-async def test_capacity_error_is_not_retried(monkeypatch, middleware):
+async def test_capacity_error_is_not_retried(monkeypatch, middleware, runtime):
     registry = FakeRegistry(SandboxUnavailableError("Sandbox limit reached — retry"))
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "print(1)", None, None)
+    out = await helpers.execute_in_sandbox(middleware, "print(1)", runtime, None)
 
     assert "Sandbox limit reached" in out
     assert registry.terminated == []
 
 
-async def test_timeout_is_reported_rather_than_retried(monkeypatch, middleware):
+async def test_timeout_is_reported_rather_than_retried(
+    monkeypatch, middleware, runtime
+):
     async def _hang() -> ExecResult:
         await asyncio.sleep(5)
         return ExecResult(output="never", exit_code=0)
@@ -111,16 +129,54 @@ async def test_timeout_is_reported_rather_than_retried(monkeypatch, middleware):
     registry = FakeRegistry(FakeSession([_hang]))
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "sleep(5)", None, timeout=1)
+    out = await helpers.execute_in_sandbox(middleware, "sleep(5)", runtime, timeout=1)
 
     assert "exceeded 1s" in out
     assert registry.terminated == []
 
 
-async def test_silent_success_tells_the_model_to_print(monkeypatch, middleware):
+async def test_silent_success_tells_the_model_to_print(
+    monkeypatch, middleware, runtime
+):
     registry = FakeRegistry(FakeSession([ExecResult(output="", exit_code=0)]))
     _install(monkeypatch, registry)
 
-    out = await helpers.execute_in_sandbox(middleware, "1 + 1", None, None)
+    out = await helpers.execute_in_sandbox(middleware, "1 + 1", runtime, None)
 
     assert "print()" in out
+
+
+async def test_execute_code_uses_the_live_thread_not_the_build_time_one(
+    monkeypatch, middleware
+):
+    registry = FakeRegistry(FakeSession([ExecResult(output="ok", exit_code=0)]))
+    _install(monkeypatch, registry)
+
+    await helpers.execute_in_sandbox(
+        middleware, "print(1)", _runtime("47::task:call_x"), None
+    )
+
+    assert registry.sessions == [(47, 7)]
+
+
+async def test_retry_terminates_the_live_thread(monkeypatch, middleware):
+    registry = FakeRegistry(
+        FakeSession([RuntimeError("kernel gone"), ExecResult(output="ok", exit_code=0)])
+    )
+    _install(monkeypatch, registry)
+
+    await helpers.execute_in_sandbox(
+        middleware, "print(1)", _runtime("47::task:call_x"), None
+    )
+
+    assert registry.terminated == ["47"]
+
+
+async def test_missing_live_thread_returns_error(monkeypatch, middleware):
+    registry = FakeRegistry(FakeSession([ExecResult(output="ok", exit_code=0)]))
+    _install(monkeypatch, registry)
+
+    out = await helpers.execute_in_sandbox(middleware, "print(1)", _runtime(None), None)
+
+    assert out == "Error: Code execution is unavailable: no live chat thread."
+    assert registry.sessions == []

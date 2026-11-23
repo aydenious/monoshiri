@@ -2,7 +2,8 @@
 
 Promoted from the Daytona-specific ``filesystem/sandbox.py``: the per-thread
 cache and per-thread lock are proven code, kept intact. Added here: an idle-TTL
-reaper and a per-workspace concurrency cap.
+reaper, a per-workspace concurrency cap, and finished turns that release their
+slot so a new thread can take it.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class _Entry:
     session: SandboxSession
     workspace_id: str
     last_used: float = field(default_factory=time.monotonic)
+    reusable: bool = False
 
 
 class SandboxRegistry:
@@ -56,6 +58,9 @@ class SandboxRegistry:
         self._capacity_mu = asyncio.Lock()
         # Fire-and-forget terminations would otherwise be collected mid-flight.
         self._pending: set[asyncio.Task] = set()
+        # The kill in flight per thread. Re-adopting before it lands would
+        # rediscover the dying sandbox by metadata and cache a dead session.
+        self._terminating: dict[str, asyncio.Task] = {}
 
     async def _lock_for(self, thread_id: str) -> asyncio.Lock:
         async with self._locks_mu:
@@ -70,6 +75,12 @@ class SandboxRegistry:
         task = asyncio.create_task(self._terminate_quietly(thread_id, session))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
+        self._terminating[thread_id] = task
+        task.add_done_callback(lambda t: self._forget_kill(thread_id, t))
+
+    def _forget_kill(self, thread_id: str, task: asyncio.Task) -> None:
+        if self._terminating.get(thread_id) is task:
+            del self._terminating[thread_id]
 
     async def _terminate_quietly(self, thread_id: str, session: SandboxSession) -> None:
         try:
@@ -103,6 +114,17 @@ class SandboxRegistry:
             if e.workspace_id == workspace_id and tid != thread_id
         )
         if live >= self._max_per_workspace:
+            reclaimable = [
+                (e.last_used, tid, e)
+                for tid, e in self._entries.items()
+                if e.workspace_id == workspace_id and tid != thread_id and e.reusable
+            ]
+            if reclaimable:
+                _, tid, entry = min(reclaimable, key=lambda item: item[0])
+                self._entries.pop(tid)
+                logger.info("Reclaiming finished sandbox for thread %s", tid)
+                self._detach(tid, entry.session)
+                return
             raise SandboxUnavailableError(
                 "Sandbox limit reached for this workspace — another conversation "
                 "is using them. Retry shortly."
@@ -120,7 +142,12 @@ class SandboxRegistry:
             entry = self._entries.get(key)
             if entry is not None:
                 entry.last_used = time.monotonic()
+                entry.reusable = False
                 return entry.session
+
+            dying = self._terminating.get(key)
+            if dying is not None:
+                await asyncio.shield(dying)
 
             async with self._capacity_mu:
                 # A different thread may have filled the workspace while this
@@ -130,6 +157,14 @@ class SandboxRegistry:
                 session = await self._provider.get_or_create_session(key)
                 self._entries[key] = _Entry(session=session, workspace_id=workspace_key)
                 return session
+
+    def release(self, thread_id: int | str) -> None:
+        """The thread's turn has ended: keep its sandbox for a follow-up, but let a
+        new thread in a full workspace take the slot."""
+        entry = self._entries.get(str(thread_id))
+        if entry is not None:
+            entry.reusable = True
+            entry.last_used = time.monotonic()
 
     def get_cached(self, thread_id: int | str) -> SandboxSession | None:
         """Return the thread's live session, or None. Never creates one.
@@ -200,3 +235,9 @@ async def get_registry() -> SandboxRegistry:
 
             _registry = SandboxRegistry(build_provider())
         return _registry
+
+
+def release_sandbox(thread_id: int | str) -> None:
+    """Mark the thread's sandbox reclaimable. No-op before any registry exists."""
+    if _registry is not None:
+        _registry.release(thread_id)

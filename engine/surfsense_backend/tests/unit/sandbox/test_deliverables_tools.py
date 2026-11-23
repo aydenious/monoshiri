@@ -9,15 +9,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    root_thread_id_from_config,
+)
 from app.agents.chat.multi_agent_chat.subagents.builtins.deliverables.tools import (
     load_artifact_for_revision as load_revision_tool,
     load_source_document as load_source_tool,
     sandbox as sandbox_tools,
     save_artifact as save_tool,
     verify_artifact as verify_tool,
-)
-from app.agents.chat.multi_agent_chat.subagents.builtins.deliverables.tools.thread_resolver import (
-    root_thread_id_from_config,
 )
 from app.artifacts.persistence import ArtifactFileRole
 from app.artifacts.verification.receipt import (
@@ -432,6 +432,43 @@ async def test_binary_save_rejects_bytes_changed_after_verification(monkeypatch)
     assert "changed after verification" in str(result)
 
 
+def test_verified_markdown_accepts_missing_final_newline():
+    expected = sha256_bytes(b"# A\n- b\n")
+
+    assert save_tool._verified_markdown("# A\n- b", expected, "mindmap") == "# A\n- b\n"
+
+
+def test_verified_markdown_rejects_changed_text():
+    expected = sha256_bytes(b"# A\n- b\n")
+
+    with pytest.raises(ValueError, match="mindmap Markdown changed after verification"):
+        save_tool._verified_markdown("# A\n- c", expected, "mindmap")
+
+
+async def test_mindmap_save_accepts_missing_final_newline(monkeypatch):
+    path = "/workspace/map.png"
+    verified = "# Three facts\n"
+    session = _sandbox({path: b"verified-png"})
+    await _add_receipt(
+        session,
+        path,
+        format_name="mindmap",
+        markdown_representation=verified,
+    )
+    captured = _patch_save_tool(monkeypatch, session)
+    tool = save_tool.create_save_artifact_tool(WORKSPACE_ID)
+
+    result = await tool.coroutine(
+        title="Map",
+        markdown_representation="# Three facts",
+        path=path,
+        runtime=_runtime(),
+    )
+
+    assert _command_payload(result)["status"] == "saved"
+    assert captured["markdown_representation"] == verified
+
+
 async def test_mindmap_save_requires_exact_bound_markdown(monkeypatch):
     path = "/workspace/map.png"
     markdown = "# Root\n- Child"
@@ -447,7 +484,7 @@ async def test_mindmap_save_requires_exact_bound_markdown(monkeypatch):
 
     rejected = await tool.coroutine(
         title="Map",
-        markdown_representation=f"{markdown}\n",
+        markdown_representation="# Root\n- Changed",
         path=path,
         runtime=_runtime(),
     )
@@ -822,6 +859,45 @@ async def test_load_source_document_sends_authored_content_to_the_text_route(
 
     with pytest.raises(ValueError, match="knowledge_base"):
         await tool.coroutine(path="/documents/Notes.md", runtime=_runtime())
+
+
+async def test_missing_stored_original_is_reported_to_the_model(monkeypatch):
+    @asynccontextmanager
+    async def db_session():
+        yield object()
+
+    async def virtual_path_to_doc(_session, *, workspace_id, virtual_path):
+        return SimpleNamespace(id=8)
+
+    async def get_document_file(_session, *, document_id, kind):
+        assert kind is DocumentFileKind.ORIGINAL
+        return SimpleNamespace(
+            size_bytes=10,
+            original_filename="notes.txt",
+            mime_type="text/plain",
+        )
+
+    def open_document_file_stream(_record):
+        async def stream():
+            raise FileNotFoundError(2, "No such file or directory")
+            yield b""  # pragma: no cover
+
+        return stream()
+
+    monkeypatch.setattr(load_source_tool, "shielded_async_session", db_session)
+    monkeypatch.setattr(load_source_tool, "virtual_path_to_doc", virtual_path_to_doc)
+    monkeypatch.setattr(load_source_tool, "get_document_file", get_document_file)
+    monkeypatch.setattr(
+        load_source_tool, "open_document_file_stream", open_document_file_stream
+    )
+
+    tool = load_source_tool.create_load_source_document_tool(workspace_id=WORKSPACE_ID)
+    with pytest.raises(ValueError) as excinfo:
+        await tool.coroutine(path="/documents/notes.txt", runtime=_runtime())
+
+    message = str(excinfo.value)
+    assert "its stored file is missing" in message
+    assert "/documents/notes.txt" in message
 
 
 async def test_execute_python_uses_unique_one_shot_scripts_and_cleans_up(monkeypatch):

@@ -11,6 +11,9 @@ from langchain_core.tools import BaseTool, tool
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.agents.chat.multi_agent_chat.subagents.shared.hitl.questions import (
     StructuredQuestion,
     StructuredQuestionInterrupt,
@@ -37,8 +40,6 @@ from app.config import config as app_config
 from app.db import shielded_async_session
 from app.file_storage.factory import get_storage_backend
 from app.sandbox import get_registry
-
-from .thread_resolver import resolve_root_thread_id
 
 _REVISION_INSTRUCTIONS = {
     "pptx": (
@@ -254,9 +255,7 @@ def create_load_artifact_for_revision_tool(*, workspace_id: int) -> BaseTool:
 
         working_dir = f"/workspace/artifact-revisions/{artifact_id}/{uuid4().hex}"
         markdown_path = f"{working_dir}/context.md"
-        sandbox = await (await get_registry()).get_session(
-            root_thread_id, workspace_id
-        )
+        sandbox = await (await get_registry()).get_session(root_thread_id, workspace_id)
         created = await sandbox.run_command(f"mkdir -p -- {shlex.quote(working_dir)}")
         if not created.ok:
             raise RuntimeError("Could not create the artifact revision workspace")

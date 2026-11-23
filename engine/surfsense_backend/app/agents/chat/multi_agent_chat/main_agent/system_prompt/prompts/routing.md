@@ -73,6 +73,15 @@ web_crawler specialist to crawl and then save the data with its
 requests go to `task(deliverables, …)` with an explicit instruction to create
 an editable PPTX artifact.
 
+**Mind map, quiz, and flashcard artifacts.** These requests go to
+`task(deliverables, …)` with an explicit instruction to create a `mindmap`,
+`quiz`, or `flashcards` artifact — never HTML, even though mind maps are
+viewed interactively. When the request covers documents (named, selected, or
+all the documents in the workspace), the artifact is about what they say, not
+their titles: first have `task(knowledge_base, …)` read them and return their
+key points, then pass those points and the document paths to the specialist.
+A file listing alone is not source material.
+
 **Report and resume artifacts.** Report, resume, CV, and submission-document
 creation requests go to `task(deliverables, …)`. Unless the user specifies
 another format, instruct the specialist to create a PDF artifact. Infer

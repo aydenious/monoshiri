@@ -540,6 +540,48 @@
         "title": "AgentToolInfo",
         "type": "object"
       },
+      "ArtifactFileEntry": {
+        "properties": {
+          "content_url": {
+            "title": "Content Url",
+            "type": "string"
+          },
+          "file_id": {
+            "title": "File Id",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "primary",
+              "preview"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_id",
+          "role",
+          "filename",
+          "mime_type",
+          "size_bytes",
+          "content_url"
+        ],
+        "title": "ArtifactFileEntry",
+        "type": "object"
+      },
       "ArtifactFileOut": {
         "properties": {
           "content_url": {
@@ -629,6 +671,197 @@
           "message"
         ],
         "title": "ArtifactGenerationResponse",
+        "type": "object"
+      },
+      "ArtifactLegacyRef": {
+        "description": "Legacy podcast / video / image reference stashed under ``metadata.legacy``.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "ArtifactLegacyRef",
+        "type": "object"
+      },
+      "ArtifactListItem": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "indexing_status": {
+            "title": "Indexing Status",
+            "type": "string"
+          },
+          "legacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactLegacyRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "document_id",
+          "title",
+          "format",
+          "generation",
+          "indexing_status",
+          "thread_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ArtifactListItem",
+        "type": "object"
+      },
+      "ArtifactManifest": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "integer"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactFileEntry"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "flashcard_study_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlashcardStudyState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "legacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactLegacyRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "markdown_representation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Markdown Representation"
+          },
+          "quiz_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "document_id",
+          "title",
+          "format",
+          "generation",
+          "markdown_representation",
+          "files",
+          "updated_at"
+        ],
+        "title": "ArtifactManifest",
         "type": "object"
       },
       "ArtifactOut": {
@@ -3241,6 +3474,39 @@
           "mark"
         ],
         "title": "FlashcardProgressUpdate",
+        "type": "object"
+      },
+      "FlashcardStudyState": {
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "marks": {
+            "additionalProperties": {
+              "enum": [
+                "good",
+                "again"
+              ],
+              "type": "string"
+            },
+            "title": "Marks",
+            "type": "object"
+          },
+          "order": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "marks",
+          "order"
+        ],
+        "title": "FlashcardStudyState",
         "type": "object"
       },
       "FolderBreadcrumb": {
@@ -6706,6 +6972,52 @@
           "question_index"
         ],
         "title": "QuizSkipUpdate",
+        "type": "object"
+      },
+      "QuizState": {
+        "properties": {
+          "active_question_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Active Question Indices",
+            "type": "array"
+          },
+          "answers": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Answers",
+            "type": "object"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "all",
+              "missed"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "skipped_question_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Skipped Question Indices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "mode",
+          "active_question_indices",
+          "answers",
+          "skipped_question_indices"
+        ],
+        "title": "QuizState",
         "type": "object"
       },
       "RefreshTokenRequest": {
@@ -16205,7 +16517,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactListItem"
+                  },
+                  "title": "Response List Artifacts Api V1 Workspaces  Workspace Id  Artifacts Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -16468,7 +16786,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardStudyState"
+                }
               }
             },
             "description": "Successful Response"
@@ -16526,7 +16846,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardStudyState"
+                }
               }
             },
             "description": "Successful Response"
@@ -16583,7 +16905,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardStudyState"
+                }
               }
             },
             "description": "Successful Response"
@@ -16632,7 +16956,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactManifest"
+                }
               }
             },
             "description": "Successful Response"
@@ -16691,7 +17017,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/QuizState"
+                }
               }
             },
             "description": "Successful Response"
@@ -16750,7 +17078,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/QuizState"
+                }
               }
             },
             "description": "Successful Response"
@@ -16809,7 +17139,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/QuizState"
+                }
               }
             },
             "description": "Successful Response"

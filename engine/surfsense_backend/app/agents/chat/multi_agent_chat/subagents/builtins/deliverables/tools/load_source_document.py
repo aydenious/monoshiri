@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import shlex
 from pathlib import PurePosixPath
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import BaseTool, tool
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.capabilities.core import ActivityDescriptor
 from app.config import config as app_config
 from app.db import shielded_async_session
@@ -16,11 +20,17 @@ from app.file_storage.service import get_document_file, open_document_file_strea
 from app.knowledge_store.paths import virtual_path_to_doc
 from app.sandbox import get_registry
 
-from .thread_resolver import resolve_root_thread_id
+logger = logging.getLogger(__name__)
 
 _NO_BINARY = (
     "'{path}' has no stored upload to convert — it is authored content, not an "
     "uploaded file. Ask the knowledge_base subagent to read it, then generate "
+    "the deliverable from that text."
+)
+
+_MISSING_ORIGINAL = (
+    "'{path}' was uploaded, but its stored file is missing. Ask the "
+    "knowledge_base subagent to read the document's text, then generate "
     "the deliverable from that text."
 )
 
@@ -71,7 +81,13 @@ def create_load_source_document_tool(*, workspace_id: int) -> BaseTool:
             document_id = document.id
             filename = PurePosixPath(record.original_filename).name
             mime_type = record.mime_type or "application/octet-stream"
-            data = await _read_original(record)
+            try:
+                data = await _read_original(record)
+            except FileNotFoundError:
+                logger.warning(
+                    "Stored original is missing for document %s", document.id
+                )
+                raise ValueError(_MISSING_ORIGINAL.format(path=path)) from None
 
         # The upload's name is user-controlled, so only its extension is
         # carried into the sandbox path; the real name goes back as metadata.

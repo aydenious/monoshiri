@@ -16,6 +16,9 @@ from typing import Literal
 from langchain.tools import ToolRuntime
 from langchain_core.tools import BaseTool, tool
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.agents.chat.multi_agent_chat.subagents.shared.hitl.questions import (
     StructuredQuestion,
     StructuredQuestionInterrupt,
@@ -48,8 +51,6 @@ from app.config import config as app_config
 from app.db import shielded_async_session
 from app.observability.domains import media
 from app.sandbox import ExecResult, SandboxSession, get_registry
-
-from .thread_resolver import resolve_root_thread_id
 
 _MAX_CONTEXT_CHARS = 16_000
 _PROCESS_TERMINATION_GRACE_SECONDS = 5
@@ -426,32 +427,32 @@ def create_sandbox_tools(*, workspace_id: int) -> list[BaseTool]:
 
         Binary files must be persisted with save_artifact.
         """
+        # Refusals are returned, not raised: the tool node does not convert
+        # arbitrary exceptions to tool messages, so a raise ends the chat turn.
         session = await _get_session(workspace_id, runtime)
         size_result = await session.run_command(f"stat -c %s -- {shlex.quote(path)}")
-        if not size_result.ok:
-            raise FileNotFoundError(f"Could not stat sandbox file: {path}")
         try:
+            if not size_result.ok:
+                raise ValueError
             size = int(size_result.output.strip())
-        except ValueError as exc:
-            raise FileNotFoundError(f"Could not stat sandbox file: {path}") from exc
+        except ValueError:
+            return f"Error: could not stat sandbox file: {path}"
         if size > app_config.ARTIFACT_MAX_FILE_BYTES:
-            raise ValueError(
-                f"Sandbox file is {size} bytes; limit is "
+            return (
+                f"Error: sandbox file is {size} bytes; limit is "
                 f"{app_config.ARTIFACT_MAX_FILE_BYTES} bytes"
             )
         data = await session.read_file(path)
-        if b"\x00" in data:
-            raise ValueError(
-                "read_sandbox_file accepts text only; use save_artifact for binary "
-                "files"
-            )
         try:
+            if b"\x00" in data:
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "NUL byte")
             return data.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(
-                "read_sandbox_file accepts UTF-8 text only; use save_artifact for "
-                "binary files"
-            ) from exc
+        except UnicodeDecodeError:
+            return (
+                f"Error: {path} is not UTF-8 text. read_sandbox_file reads text "
+                "only; to keep a binary file (PDF, PPTX, DOCX, PNG), pass its "
+                "path to save_artifact."
+            )
 
     execute.metadata = {
         "activity_descriptor": ActivityDescriptor(

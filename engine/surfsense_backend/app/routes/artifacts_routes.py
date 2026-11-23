@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.artifacts.access.responses import (
+    ArtifactListItem,
+    ArtifactManifest,
+    FlashcardStudyState,
+    QuizState,
+)
 from app.artifacts.flashcards import (
     FlashcardOrderUpdate,
     FlashcardProgressUpdate,
@@ -168,16 +174,17 @@ async def _read_quiz(artifact: Artifact) -> QuizV1:
 def _file_manifest(
     workspace_id: int, artifact_id: int, record: ArtifactFile
 ) -> dict[str, object]:
+    content_url = (
+        f"/api/v1/workspaces/{workspace_id}/artifacts/"
+        f"{artifact_id}/files/{record.id}/content"
+    )
     return {
         "file_id": record.id,
         "role": record.role.value,
         "filename": record.original_filename,
         "mime_type": record.mime_type or "application/octet-stream",
         "size_bytes": record.size_bytes,
-        "content_url": (
-            f"/api/v1/workspaces/{workspace_id}/artifacts/"
-            f"{artifact_id}/files/{record.id}/content"
-        ),
+        "content_url": content_url,
     }
 
 
@@ -236,13 +243,14 @@ async def _load_workspace_artifact(
 
 
 def _list_item(artifact: Artifact, document: Document) -> dict[str, object]:
+    indexing_status = (document.status or {}).get("state", "ready")
     item: dict[str, object] = {
         "artifact_id": artifact.id,
         "document_id": artifact.document_id,
         "title": document.title,
         "format": artifact.format,
         "generation": artifact.generation,
-        "indexing_status": (document.status or {}).get("state", "ready"),
+        "indexing_status": indexing_status,
         "thread_id": artifact.thread_id,
         "created_at": artifact.created_at.isoformat(),
         "updated_at": (
@@ -255,7 +263,11 @@ def _list_item(artifact: Artifact, document: Document) -> dict[str, object]:
     return item
 
 
-@router.get("/workspaces/{workspace_id}/artifacts")
+@router.get(
+    "/workspaces/{workspace_id}/artifacts",
+    response_model=list[ArtifactListItem],
+    response_model_exclude_unset=True,
+)
 async def list_artifacts(
     workspace_id: int,
     response: Response,
@@ -282,7 +294,11 @@ async def list_artifacts(
     return [_list_item(artifact, document) for artifact, document in rows]
 
 
-@router.get("/workspaces/{workspace_id}/artifacts/{artifact_id}/manifest")
+@router.get(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/manifest",
+    response_model=ArtifactManifest,
+    response_model_exclude_unset=True,
+)
 async def get_artifact_manifest(
     workspace_id: int,
     artifact_id: int,
@@ -425,7 +441,10 @@ async def _commit_interaction_state(
     await session.commit()
 
 
-@router.patch("/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-progress")
+@router.patch(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-progress",
+    response_model=FlashcardStudyState,
+)
 async def update_flashcard_progress(
     workspace_id: int,
     artifact_id: int,
@@ -459,7 +478,10 @@ async def update_flashcard_progress(
     return state
 
 
-@router.delete("/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-progress")
+@router.delete(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-progress",
+    response_model=FlashcardStudyState,
+)
 async def reset_artifact_flashcard_progress(
     workspace_id: int,
     artifact_id: int,
@@ -487,7 +509,10 @@ async def reset_artifact_flashcard_progress(
     return state
 
 
-@router.put("/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-order")
+@router.put(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/flashcard-order",
+    response_model=FlashcardStudyState,
+)
 async def update_flashcard_order(
     workspace_id: int,
     artifact_id: int,
@@ -564,7 +589,10 @@ async def _lock_quiz_mutation(
     return artifact, quiz
 
 
-@router.put("/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-answer")
+@router.put(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-answer",
+    response_model=QuizState,
+)
 async def update_quiz_answer(
     workspace_id: int,
     artifact_id: int,
@@ -599,7 +627,10 @@ async def update_quiz_answer(
     return state
 
 
-@router.put("/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-skip")
+@router.put(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-skip",
+    response_model=QuizState,
+)
 async def skip_quiz_question(
     workspace_id: int,
     artifact_id: int,
@@ -633,7 +664,10 @@ async def skip_quiz_question(
     return state
 
 
-@router.post("/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-retake")
+@router.post(
+    "/workspaces/{workspace_id}/artifacts/{artifact_id}/quiz-retake",
+    response_model=QuizState,
+)
 async def retake_quiz(
     workspace_id: int,
     artifact_id: int,

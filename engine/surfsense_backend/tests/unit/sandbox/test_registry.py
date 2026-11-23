@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 import pytest
 
@@ -139,3 +140,138 @@ async def test_terminate_is_safe_when_no_session_exists():
     await registry.terminate("never-used")
 
     assert provider.terminated == ["never-used"]
+
+
+async def test_full_workspace_reclaims_a_finished_threads_sandbox():
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=2)
+
+    t1 = await registry.get_session("t1", "w1")
+    await registry.get_session("t2", "w1")
+    registry.release("t1")
+
+    # t1's turn ended, so its slot is free for a new thread even though its
+    # entry still counts against the cap until the idle TTL.
+    await registry.get_session("t3", "w1")
+    await registry.aclose()
+
+    assert t1.terminated is True
+    assert registry.get_cached("t1") is None
+    assert registry.get_cached("t2") is not None
+
+
+async def test_full_workspace_refuses_while_every_turn_is_running():
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=2)
+
+    await registry.get_session("t1", "w1")
+    await registry.get_session("t2", "w1")
+
+    with pytest.raises(SandboxUnavailableError):
+        await registry.get_session("t3", "w1")
+
+
+async def test_reusing_a_released_sandbox_holds_its_slot_again():
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=2)
+
+    t1 = await registry.get_session("t1", "w1")
+    await registry.get_session("t2", "w1")
+    registry.release("t1")
+
+    assert await registry.get_session("t1", "w1") is t1
+
+    with pytest.raises(SandboxUnavailableError):
+        await registry.get_session("t3", "w1")
+
+
+async def test_oldest_finished_sandbox_is_reclaimed_first(monkeypatch):
+    import app.sandbox.registry as registry_module
+
+    clock = itertools.count(1000)
+    monkeypatch.setattr(registry_module.time, "monotonic", lambda: next(clock))
+
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=2)
+
+    await registry.get_session("t1", "w1")
+    t2 = await registry.get_session("t2", "w1")
+    registry.release("t2")
+    registry.release("t1")
+
+    await registry.get_session("t3", "w1")
+    await registry.aclose()
+
+    assert t2.terminated is True
+    assert registry.get_cached("t1") is not None
+
+
+async def test_released_sandbox_in_another_workspace_is_not_reclaimed():
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=1)
+
+    await registry.get_session("t1", "w2")
+    registry.release("t1")
+    await registry.get_session("t2", "w1")
+
+    with pytest.raises(SandboxUnavailableError):
+        await registry.get_session("t3", "w1")
+
+
+async def test_release_sandbox_without_a_registry_is_a_no_op(monkeypatch):
+    import app.sandbox.registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_registry", None)
+
+    assert registry_module.release_sandbox("1") is None
+    assert registry_module._registry is None
+
+
+async def test_release_of_an_unknown_thread_is_a_no_op():
+    provider = FakeProvider()
+    registry = SandboxRegistry(provider)
+
+    registry.release("never-used")
+
+    assert registry.get_cached("never-used") is None
+    assert provider.created == []
+
+
+async def test_reclaimed_thread_comes_back_only_after_its_kill_lands():
+    """A follow-up in a reclaimed thread must not re-adopt the dying sandbox."""
+    gate = asyncio.Event()
+
+    class SlowKill(FakeSession):
+        async def terminate(self) -> None:
+            await gate.wait()
+            self.terminated = True
+
+    class AdoptingProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seen: list[tuple[str, bool | None]] = []
+            self.latest: dict[str, SlowKill] = {}
+
+        async def get_or_create_session(self, thread_id: str) -> SlowKill:
+            old = self.latest.get(thread_id)
+            self.seen.append((thread_id, old.terminated if old else None))
+            self.latest[thread_id] = SlowKill(thread_id)
+            return self.latest[thread_id]
+
+    provider = AdoptingProvider()
+    registry = SandboxRegistry(provider, max_sessions_per_workspace=1)
+
+    await registry.get_session("t1", "w1")
+    registry.release("t1")
+    await registry.get_session("t2", "w1")  # reclaims t1; its kill is held
+    registry.release("t2")
+    comeback = asyncio.create_task(registry.get_session("t1", "w1"))
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert not comeback.done()
+
+    gate.set()
+    await comeback
+    await registry.aclose()
+
+    assert provider.seen[-1] == ("t1", True)

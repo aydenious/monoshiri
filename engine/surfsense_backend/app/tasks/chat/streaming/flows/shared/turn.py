@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.chat.multi_agent_chat.main_agent.middleware.busy_mutex import end_turn
 from app.auth.context import AuthContext
+from app.sandbox import release_sandbox
 from app.services.new_streaming_service import VercelStreamingService
 from app.tasks.chat.streaming.contract.file_contract import log_file_contract
 from app.tasks.chat.streaming.flows.shared.analytics import (
@@ -245,10 +246,13 @@ async def run_shielded_turn_cleanup(
 def release_turn_lock(turn: TurnContext) -> None:
     """Release the busy lock for an interrupted / bailed-out turn.
 
-    ``aafter_agent`` doesn't fire on ``interrupt()`` or early bailout. Skipped
-    on ``BusyError`` (this request never held the lock).
+    ``aafter_agent`` doesn't fire on ``interrupt()`` or early bailout. Also
+    marks the thread's sandbox reclaimable now the turn is over. Both are
+    skipped on ``BusyError``: this request never held the turn, and the turn
+    that does is still using the sandbox.
     """
     if not turn.busy_error_raised:
+        release_sandbox(turn.chat_id)
         with contextlib.suppress(Exception):
             end_turn(str(turn.chat_id))
             _perf_log.info(

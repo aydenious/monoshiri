@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.chat.multi_agent_chat.subagents.builtins.deliverables.tools.thread_resolver import (
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
     resolve_root_thread_id,
 )
 from app.artifacts.media.image.generation import generate_image_response

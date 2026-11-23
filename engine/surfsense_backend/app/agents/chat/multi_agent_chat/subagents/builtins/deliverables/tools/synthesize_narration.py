@@ -14,6 +14,9 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import BaseTool, tool
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.chat.multi_agent_chat.shared.thread_resolver import (
+    resolve_root_thread_id,
+)
 from app.capabilities.core import ActivityDescriptor
 from app.config import config as app_config
 from app.db import shielded_async_session
@@ -29,8 +32,6 @@ from app.podcasts.voices import (
 )
 from app.sandbox import SandboxSession, get_registry
 from app.services.llm_usage import recorded_llm_call, resolve_workspace_owner
-
-from .thread_resolver import resolve_root_thread_id
 
 _SANDBOX_WORKSPACE = PurePosixPath("/workspace")
 _LEGACY_ENGLISH_VOICE_ID: dict[TtsProvider, str] = {

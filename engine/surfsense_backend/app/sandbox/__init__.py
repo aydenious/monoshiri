@@ -7,7 +7,7 @@ from .protocol import (
     SandboxSession,
     SandboxUnavailableError,
 )
-from .registry import SandboxRegistry, get_registry
+from .registry import SandboxRegistry, get_registry, release_sandbox
 
 __all__ = [
     "ExecResult",
@@ -17,4 +17,5 @@ __all__ = [
     "SandboxUnavailableError",
     "get_registry",
     "is_sandbox_enabled",
+    "release_sandbox",
 ]
